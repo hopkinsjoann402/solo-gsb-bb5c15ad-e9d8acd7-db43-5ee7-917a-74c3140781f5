@@ -23,6 +23,11 @@ const { window } = dom
   ((id: number) => clearTimeout(id) as unknown) as typeof cancelAnimationFrame
 ;(globalThis as unknown as { localStorage: Storage }).localStorage = window.localStorage
 
+// jsdom 不实现 scrollIntoView；覆盖审计 / 定位点击会调用它
+if (typeof window.Element.prototype.scrollIntoView !== 'function') {
+  window.Element.prototype.scrollIntoView = function scrollIntoView() {}
+}
+
 const React = (await import('react')).default
 const { createRoot } = await import('react-dom/client')
 const { default: App } = await import('../src/App')
@@ -322,6 +327,186 @@ console.log('  ✓ 冲突审阅面板（含忽略折叠与交叠高亮）渲染�
   c.remove()
 }
 
+// 标签覆盖审计：选择标签后实时显示缺口/重叠，点击定位，配置持久化
+{
+  // 0..19 共 20 字；a=[0,8) X，b=[5,12) X（与 a 重叠 [5,8)），[12,20) 为缺口
+  const covText = '零一二三四五六七八九十甲乙丙丁戊己庚辛壬癸'
+  const covDoc = {
+    title: '覆盖文档',
+    text: covText,
+    updatedAt: Date.now(),
+    annotations: [
+      {
+        id: 'cov_a',
+        quote: covText.slice(0, 8),
+        start: 0,
+        end: 8,
+        note: '',
+        tags: ['X'],
+        status: 'bound',
+        createdAt: 100,
+        updatedAt: 100,
+        contextBefore: '',
+        contextAfter: '',
+      },
+      {
+        id: 'cov_b',
+        quote: covText.slice(5, 12),
+        start: 5,
+        end: 12,
+        note: '',
+        tags: ['X'],
+        status: 'bound',
+        createdAt: 100,
+        updatedAt: 100,
+        contextBefore: '',
+        contextAfter: '',
+      },
+      {
+        id: 'cov_p',
+        quote: '不存在的引文ZZZ',
+        start: 0,
+        end: 5,
+        note: '',
+        tags: ['X'],
+        status: 'pending',
+        createdAt: 100,
+        updatedAt: 100,
+        contextBefore: '',
+        contextAfter: '',
+        pendingReason: '原文中已找不到该引文，需要手动重新选择',
+      },
+    ],
+  }
+  localStorage.setItem('anchor-annotation-console:v1', JSON.stringify(covDoc))
+  root3.unmount()
+  const cc = document.createElement('div')
+  cc.id = 'rootcov'
+  document.body.appendChild(cc)
+  const cr = createRoot(cc)
+
+  await new Promise<void>((resolve) => {
+    cr.render(React.createElement(React.StrictMode, null, React.createElement(App)))
+    setTimeout(resolve, 100)
+  })
+
+  const html0 = cc.innerHTML
+  assert.ok(html0.includes('标签覆盖审计'), '应渲染覆盖审计分区')
+  // 未选择标签时无结果
+  assert.ok(!html0.includes('cov-item'), '未选择标签时不应列出问题')
+
+  // 点击标签 chip 选择 #X
+  const chip = [...cc.querySelectorAll('.cov-tag')].find(
+    (b) => b.textContent?.trim() === '#X',
+  ) as HTMLButtonElement
+  assert.ok(chip, '应出现标签选择按钮 #X')
+  chip.click()
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+
+  const html1 = cc.innerHTML
+  assert.ok(html1.includes('缺口'), '应显示缺口结果')
+  assert.ok(html1.includes('重叠'), '应显示重叠结果')
+  assert.ok(html1.includes('2 条标注叠加'), '重叠卡片应列出叠加标注数')
+  assert.ok(html1.includes('cov-gap'), '原文缺口段应有 cov-gap 着色')
+  assert.ok(html1.includes('cov-overlap'), '原文重叠段应有 cov-overlap 着色')
+  // 顶栏出现覆盖审计入口与计数（缺口 1 + 重叠 1 = 2）
+  assert.ok(html1.includes('覆盖审计'), '顶栏应出现覆盖审计入口')
+  // 配置已写入 localStorage
+  const saved1 = JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!)
+  assert.deepStrictEqual(saved1.coverageTags, ['X'])
+
+  // 点击重叠卡片的主体 → 区间高亮
+  const overlapMain = cc.querySelector('.cov-item-overlap .cov-main') as HTMLButtonElement
+  assert.ok(overlapMain, '应存在重叠结果卡片')
+  overlapMain.click()
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  assert.ok(cc.innerHTML.includes('cov-active'), '点击结果后应高亮对应区间')
+
+  // 取消选择标签 → 结果清空、持久化同步
+  chip.click()
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  assert.ok(!cc.innerHTML.includes('cov-item'), '取消全部标签后问题清空')
+  const saved2 = JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!)
+  assert.deepStrictEqual(saved2.coverageTags, [])
+  console.log('  ✓ 标签覆盖审计：标签选择、缺口/重叠列表、原文着色、点击高亮与持久化')
+
+  cr.unmount()
+  cc.remove()
+}
+
+// 标签重命名后覆盖审计实时重算：旧标签选择自动跟随，结果仍正确
+{
+  const rnText = '零一二三四五六七八九十'
+  const rnDoc = {
+    title: '覆盖重命名',
+    text: rnText,
+    updatedAt: Date.now(),
+    annotations: [
+      {
+        id: 'rnc_a',
+        quote: rnText.slice(0, 5),
+        start: 0,
+        end: 5,
+        note: '',
+        tags: ['旧标签'],
+        status: 'bound',
+        createdAt: 1,
+        updatedAt: 1,
+        contextBefore: '',
+        contextAfter: '',
+      },
+    ],
+    coverageTags: ['旧标签'],
+  }
+  localStorage.setItem('anchor-annotation-console:v1', JSON.stringify(rnDoc))
+  const c2 = document.createElement('div')
+  c2.id = 'rootcovrn'
+  document.body.appendChild(c2)
+  const r2 = createRoot(c2)
+
+  await new Promise<void>((resolve) => {
+    r2.render(React.createElement(React.StrictMode, null, React.createElement(App)))
+    setTimeout(resolve, 100)
+  })
+
+  // 选集中含「旧标签」，区间 [0,5) 覆盖、[5,10) 缺口
+  assert.ok(c2.innerHTML.includes('缺口'), '重命名前应有缺口（后半段未覆盖）')
+
+  const clickButton = (text: string) => {
+    const btn = [...c2.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === text,
+    ) as HTMLButtonElement | undefined
+    assert.ok(btn, `应存在按钮「${text}」`)
+    btn.click()
+  }
+  clickButton('标签重命名')
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  const select = c2.querySelector('.rename-fields select') as HTMLSelectElement
+  select.value = '旧标签'
+  select.dispatchEvent(new window.Event('change', { bubbles: true }))
+  const input = c2.querySelector('.rename-fields input') as HTMLInputElement
+  const setValue = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    'value',
+  )!.set!
+  setValue.call(input, '新标签')
+  input.dispatchEvent(new window.Event('input', { bubbles: true }))
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  clickButton('确认重命名')
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+
+  const after = JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!)
+  assert.deepStrictEqual(after.coverageTags, ['新标签'], '覆盖标签集应跟随重命名')
+  assert.deepStrictEqual(after.annotations[0].tags, ['新标签'])
+  // 选择集跟随 → 缺口仍存在（覆盖区间不变）
+  assert.ok(c2.innerHTML.includes('缺口'), '重命名后审计实时重算，缺口仍在')
+  assert.ok(c2.innerHTML.includes('#新标签'), '标签选择器应显示新标签')
+  console.log('  ✓ 标签重命名后覆盖审计选择集跟随并实时重算')
+
+  r2.unmount()
+  c2.remove()
+}
+
 // 旧版数据（无 conflictRules / ignoredConflicts 字段）应无损加载
 const legacy = {
   title: '旧文档',
@@ -351,6 +536,7 @@ assert.ok(html4.includes('尚未配置互斥标签对'), '旧版数据应显示�
 const reparsed = JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!)
 assert.ok(Array.isArray(reparsed.conflictRules) && reparsed.conflictRules.length === 0)
 assert.ok(Array.isArray(reparsed.ignoredConflicts) && reparsed.ignoredConflicts.length === 0)
+assert.ok(Array.isArray(reparsed.coverageTags) && reparsed.coverageTags.length === 0)
 assert.strictEqual(reparsed.text, '一二三四五六')
 console.log('  ✓ 旧数据无损兼容并自动补齐冲突字段')
 

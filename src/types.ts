@@ -69,6 +69,8 @@ export interface DocumentData {
   conflictRules: ConflictRule[]
   /** 已忽略冲突的签名记录 */
   ignoredConflicts: IgnoredConflict[]
+  /** 标签覆盖审计：应共同覆盖全文的标签集合 */
+  coverageTags: string[]
   updatedAt: number
 }
 
@@ -93,6 +95,8 @@ export interface ExportPayload {
     ruleIds: string[]
     createdAt: string
   }>
+  /** 标签覆盖审计选择的标签（旧版文件缺省时按空数组处理） */
+  coverageTags: string[]
   annotations: Array<{
     id: string
     status: AnnotationStatus

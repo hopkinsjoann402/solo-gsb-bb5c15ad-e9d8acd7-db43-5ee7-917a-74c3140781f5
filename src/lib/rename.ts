@@ -51,6 +51,8 @@ export interface TagRenamePlan {
   annotations: Annotation[]
   rules: ConflictRule[]
   ignoredConflicts: IgnoredConflict[]
+  /** 覆盖审计所选标签（同步精确替换，保序去重） */
+  coverageTags: string[]
   annotationChanges: AnnotationTagChange[]
   ruleChanges: RuleChange[]
   /** 引用了源标签的规则总数（= changed + merged + deleted 明细数） */
@@ -70,6 +72,8 @@ interface RenamePlanInput {
   annotations: Annotation[]
   conflictRules: ConflictRule[]
   ignoredConflicts: IgnoredConflict[]
+  /** 覆盖审计所选标签；缺省视为空（旧调用方兼容） */
+  coverageTags?: string[]
 }
 
 /** 判断规则是否引用源标签 */
@@ -102,8 +106,16 @@ export function planTagRename(
 
   const sourceExists =
     doc.annotations.some((a) => a.tags.includes(source)) ||
-    doc.conflictRules.some((r) => touches(r, source))
+    doc.conflictRules.some((r) => touches(r, source)) ||
+    (doc.coverageTags ?? []).includes(source)
   if (!sourceExists) return null
+
+  // 覆盖审计所选标签：精确替换、保序去重（目标标签已在更前位置时跳过）
+  const coverageTags: string[] = []
+  for (const t of doc.coverageTags ?? []) {
+    const v = t === source ? target : t
+    if (!coverageTags.includes(v)) coverageTags.push(v)
+  }
 
   // ---------- 1. 标注标签：精确替换 + 同条去重保序 ----------
 
@@ -253,6 +265,7 @@ export function planTagRename(
     annotations,
     rules,
     ignoredConflicts: kept,
+    coverageTags,
     annotationChanges,
     ruleChanges,
     affectedRuleCount: doc.conflictRules.filter((r) => touches(r, source)).length,

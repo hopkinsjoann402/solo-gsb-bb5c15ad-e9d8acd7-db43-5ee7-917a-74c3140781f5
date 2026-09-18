@@ -7,6 +7,7 @@ interface Props {
   annotations: Annotation[]
   conflictRules: ConflictRule[]
   ignoredConflicts: IgnoredConflict[]
+  coverageTags: string[]
   allTags: string[]
   onCancel: () => void
   onApply: (source: string, target: string) => void
@@ -35,6 +36,7 @@ export function TagRenameEditor({
   annotations,
   conflictRules,
   ignoredConflicts,
+  coverageTags,
   allTags,
   onCancel,
   onApply,
@@ -48,12 +50,12 @@ export function TagRenameEditor({
     () =>
       source
         ? planTagRename(
-            { annotations, conflictRules, ignoredConflicts },
+            { annotations, conflictRules, ignoredConflicts, coverageTags },
             source,
             target,
           )
         : null,
-    [source, target, annotations, conflictRules, ignoredConflicts],
+    [source, target, annotations, conflictRules, ignoredConflicts, coverageTags],
   )
 
   const sameTag = normalizedTarget !== '' && normalizedTarget === source

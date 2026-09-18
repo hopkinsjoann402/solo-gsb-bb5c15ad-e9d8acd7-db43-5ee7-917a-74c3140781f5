@@ -1,8 +1,10 @@
 import { forwardRef } from 'react'
+import type { RefObject } from 'react'
 import type { Annotation, ConflictRule } from '../types'
 import { REASON_LABEL } from '../lib/relocation'
 import { badgeColor } from '../lib/segments'
 import type { ConflictItem } from '../lib/conflicts'
+import type { CoverageIssue, CoverageResult } from '../lib/coverage'
 
 interface Props {
   text: string
@@ -10,6 +12,14 @@ interface Props {
   activeId: string | null
   conflictRules: ConflictRule[]
   conflicts: ConflictItem[]
+  /** 标签覆盖审计 */
+  coverageTags: string[]
+  coverageResult: CoverageResult
+  activeCoverageKey: string | null
+  onChangeCoverageTags: (tags: string[]) => void
+  onFocusCoverage: (issue: CoverageIssue) => void
+  /** 覆盖审计分区的滚动定位 ref（顶栏按钮用） */
+  coverageSectionRef?: RefObject<HTMLElement | null>
   onFocus: (a: Annotation) => void
   onEdit: (a: Annotation) => void
   onRebindStart: (a: Annotation) => void
@@ -20,6 +30,11 @@ interface Props {
   onConfigureRules: () => void
   onRenameTags: () => void
   tagCount: number
+}
+
+/** 覆盖问题的稳定键：类型 + 起点（审计结果按起点唯一排列） */
+export function coverageIssueKey(item: CoverageIssue): string {
+  return `${item.kind}:${item.start}:${item.end}`
 }
 
 function formatTime(ts: number): string {
@@ -209,6 +224,195 @@ function ConflictCard({
   )
 }
 
+/** 缺口 / 重叠结果卡片 */
+function CoverageCard({
+  text,
+  item,
+  annById,
+  active,
+  onFocusIssue,
+  onFocusAnnotation,
+  onEdit,
+}: {
+  text: string
+  item: CoverageIssue
+  annById: Map<string, Annotation>
+  active: boolean
+  onFocusIssue: (item: CoverageIssue) => void
+  onFocusAnnotation: (a: Annotation) => void
+  onEdit: (a: Annotation) => void
+}) {
+  const quote = text.slice(item.start, item.end)
+  const length = item.end - item.start
+  return (
+    <div className={`cov-item cov-item-${item.kind} ${active ? 'cov-item-active' : ''}`}>
+      <button
+        type="button"
+        className="cov-main"
+        title="在原文中定位该区间"
+        onClick={() => onFocusIssue(item)}
+      >
+        <span className={`cov-flag cov-flag-${item.kind}`}>
+          {item.kind === 'gap' ? '缺口' : '重叠'}
+        </span>
+        <span className="cov-body">
+          <span className="cov-quote">
+            {quote || <span className="ann-empty-quote">（空区间）</span>}
+          </span>
+          <span className="cov-meta">
+            {item.start}–{item.end} · {length} 字
+            {item.kind === 'overlap' && ` · ${item.annotationIds.length} 条标注叠加`}
+          </span>
+        </span>
+      </button>
+      {item.kind === 'overlap' && item.annotations.length > 0 && (
+        <div className="cov-anns">
+          {item.annotations.map((ca) => {
+            const a = annById.get(ca.id)
+            return (
+              <div className="cov-ann-row" key={ca.id}>
+                <button
+                  type="button"
+                  className="cov-ann-main"
+                  title="在原文中定位该标注"
+                  onClick={() => a && onFocusAnnotation(a)}
+                >
+                  <span className="ann-badge" style={{ backgroundColor: badgeColor(ca.id) }} />
+                  <span className="cov-ann-quote" title={ca.quote}>
+                    {ca.quote || <span className="ann-empty-quote">（空引文）</span>}
+                  </span>
+                </button>
+                {ca.tags.length > 0 && (
+                  <span className="cov-ann-tags">
+                    {ca.tags.map((t) => (
+                      <span className="ann-tag" key={t}>
+                        #{t}
+                      </span>
+                    ))}
+                  </span>
+                )}
+                {a && (
+                  <button
+                    className="btn btn-small btn-ghost cov-ann-edit"
+                    onClick={() => onEdit(a)}
+                  >
+                    编辑
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 标签覆盖审计侧栏分区 */
+function CoverageSection(
+  props: Pick<
+    Props,
+    | 'text'
+    | 'annotations'
+    | 'coverageTags'
+    | 'coverageResult'
+    | 'activeCoverageKey'
+    | 'onChangeCoverageTags'
+    | 'onFocusCoverage'
+    | 'onFocus'
+    | 'onEdit'
+    | 'coverageSectionRef'
+  >,
+) {
+  // 可选标签：当前标注中实际使用的全部标签（标签重命名后随之更新）
+  const tagSet = new Set<string>()
+  props.annotations.forEach((a) => a.tags.forEach((t) => tagSet.add(t)))
+  const allAnnotationTags = [...tagSet]
+  const selected = props.coverageTags
+  const result = props.coverageResult
+  const issueTotal = result.gapCount + result.overlapCount
+
+  const toggle = (tag: string) => {
+    props.onChangeCoverageTags(
+      selected.includes(tag) ? selected.filter((t) => t !== tag) : [...selected, tag],
+    )
+  }
+
+  const annById = new Map(props.annotations.map((a) => [a.id, a]))
+
+  return (
+    <section className="side-section" ref={(props.coverageSectionRef as React.Ref<HTMLElement>) ?? undefined}>
+      <h2
+        className={`side-heading ${issueTotal > 0 ? 'side-heading-coverage' : ''}`}
+      >
+        标签覆盖审计
+        {issueTotal > 0 && (
+          <span className="conflict-count-badge coverage-count-badge">{issueTotal}</span>
+        )}
+      </h2>
+      <p className="side-hint">
+        选择一组<strong>应共同覆盖全文</strong>的标签：仅统计已绑定且命中这些标签的标注，
+        按 <code>[start,end)</code> 扫描全文——覆盖数为 0 记为<strong>缺口</strong>，
+        大于 1 记为<strong>重叠</strong>；待处理标注与空区间忽略。
+      </p>
+
+      <div className="cov-tagpick">
+        {allAnnotationTags.length === 0 ? (
+          <p className="side-hint">还没有任何标签。先为标注添加标签后再来配置覆盖审计。</p>
+        ) : (
+          allAnnotationTags.map((t) => (
+            <button
+              type="button"
+              key={t}
+              className={`cov-tag ${selected.includes(t) ? 'cov-tag-on' : ''}`}
+              aria-pressed={selected.includes(t)}
+              onClick={() => toggle(t)}
+              title={selected.includes(t) ? '点击移出覆盖标签集' : '点击加入覆盖标签集'}
+            >
+              #{t}
+            </button>
+          ))
+        )}
+      </div>
+
+      {selected.length > 0 && (
+        <>
+          <div className="cov-summary">
+            <span className="cov-summary-item cov-summary-gap">
+              缺口 <strong>{result.gapCount}</strong> 处 · {result.gapLength} 字
+            </span>
+            <span className="cov-summary-item cov-summary-overlap">
+              重叠 <strong>{result.overlapCount}</strong> 处
+            </span>
+            <span className="cov-summary-item">
+              恰好覆盖一次 <strong>{result.coveredLength}</strong> 字
+            </span>
+          </div>
+          <p className="side-hint">
+            按起点排列；相邻且类型与参与标注集合相同的区间已合并。点击结果可在原文中定位并高亮。
+          </p>
+          {result.issues.length === 0 ? (
+            <p className="cov-ok">✓ 所选标签恰好覆盖全文一次，没有缺口或重叠。</p>
+          ) : (
+            result.issues.map((item) => (
+              <CoverageCard
+                key={coverageIssueKey(item)}
+                text={props.text}
+                item={item}
+                annById={annById}
+                active={props.activeCoverageKey === coverageIssueKey(item)}
+                onFocusIssue={props.onFocusCoverage}
+                onFocusAnnotation={props.onFocus}
+                onEdit={props.onEdit}
+              />
+            ))
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
 export const Sidebar = forwardRef<HTMLElement, Props>(function Sidebar(props, sectionRef) {
   const pending = props.annotations
     .filter((a) => a.status === 'pending')
@@ -242,6 +446,19 @@ export const Sidebar = forwardRef<HTMLElement, Props>(function Sidebar(props, se
           ))}
         </section>
       )}
+
+      <CoverageSection
+        text={props.text}
+        annotations={props.annotations}
+        coverageTags={props.coverageTags}
+        coverageResult={props.coverageResult}
+        activeCoverageKey={props.activeCoverageKey}
+        onChangeCoverageTags={props.onChangeCoverageTags}
+        onFocusCoverage={props.onFocusCoverage}
+        onFocus={props.onFocus}
+        onEdit={props.onEdit}
+        coverageSectionRef={props.coverageSectionRef}
+      />
 
       <section className="side-section" ref={sectionRef as React.Ref<HTMLElement>}>
         <div className="side-heading-row">

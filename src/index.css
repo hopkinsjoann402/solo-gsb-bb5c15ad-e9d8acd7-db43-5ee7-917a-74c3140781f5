@@ -1138,6 +1138,231 @@ button {
   color: var(--ink-faint);
 }
 
+/* ---------- 标签覆盖审计 ---------- */
+
+.side-heading-coverage {
+  color: var(--primary-dark);
+}
+
+.coverage-count-badge {
+  background: var(--primary);
+}
+
+.foot-coverage {
+  color: var(--primary-dark);
+  font-weight: 600;
+}
+
+.cov-tagpick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 10px;
+}
+
+.cov-tag {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.cov-tag:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.cov-tag-on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.cov-tag-on:hover {
+  background: var(--primary-dark);
+  color: #fff;
+}
+
+.cov-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.cov-summary-item strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.cov-summary-gap strong {
+  color: var(--danger);
+}
+
+.cov-summary-overlap strong {
+  color: #b06a00;
+}
+
+.cov-ok {
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #ecfdf3;
+  color: #1a6b3c;
+  font-size: 12.5px;
+}
+
+.cov-item {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  padding: 9px 11px;
+  margin-bottom: 10px;
+}
+
+.cov-item-gap {
+  border-left-color: var(--danger);
+}
+
+.cov-item-overlap {
+  border-left-color: #e8a020;
+}
+
+.cov-item-active {
+  border-color: var(--primary);
+  border-left-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(47, 107, 255, 0.18);
+}
+
+.cov-main {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.cov-flag {
+  flex-shrink: 0;
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 5px;
+  padding: 2px 7px;
+  margin-top: 1px;
+}
+
+.cov-flag-gap {
+  background: #fdeeee;
+  color: #a52727;
+}
+
+.cov-flag-overlap {
+  background: var(--warn-bg);
+  color: #945800;
+}
+
+.cov-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cov-quote {
+  font-size: 13px;
+  line-height: 1.6;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+.cov-meta {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+
+.cov-anns {
+  margin: 8px 0 0 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cov-ann-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cov-ann-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  min-width: 0;
+}
+.cov-ann-main:hover .cov-ann-quote {
+  text-decoration: underline;
+}
+
+.cov-ann-quote {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cov-ann-tags {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.cov-ann-edit {
+  margin-left: auto;
+}
+
+/* 原文中的缺口 / 重叠着色（叠加在标注高亮之上） */
+
+.cov-gap {
+  background-color: rgba(216, 58, 58, 0.12);
+  box-shadow: inset 0 0 0 1.5px rgba(216, 58, 58, 0.65);
+  border-radius: 3px;
+  cursor: text;
+}
+
+.cov-overlap {
+  background-color: rgba(232, 160, 32, 0.16);
+  box-shadow:
+    var(--hl-shadow),
+    inset 0 0 0 1.5px rgba(184, 120, 0, 0.65);
+  border-radius: 3px;
+}
+
+.cov-active {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  box-shadow: 0 0 0 4px rgba(47, 107, 255, 0.28) !important;
+}
+
 /* ---------- 响应式 ---------- */
 
 @media (max-width: 980px) {

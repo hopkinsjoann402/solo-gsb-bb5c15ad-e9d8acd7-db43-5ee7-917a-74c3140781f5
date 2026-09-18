@@ -27,6 +27,11 @@ import {
   type ConflictItem,
 } from './lib/conflicts'
 import { planTagRename } from './lib/rename'
+import {
+  auditCoverage,
+  normalizeCoverageTags,
+  type CoverageIssue,
+} from './lib/coverage'
 import { TextView, type ViewRect } from './components/TextView'
 import { TextEditor } from './components/TextEditor'
 import { Sidebar } from './components/Sidebar'
@@ -56,6 +61,7 @@ const EMPTY_DOC: DocumentData = {
   annotations: [],
   conflictRules: [],
   ignoredConflicts: [],
+  coverageTags: [],
   updatedAt: Date.now(),
 }
 
@@ -79,8 +85,11 @@ export default function App() {
   const [popover, setPopover] = useState<PopoverState | null>(null)
   const [rebindId, setRebindId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
+  /** 侧栏点击覆盖审计结果后高亮的区间 */
+  const [activeCoverage, setActiveCoverage] = useState<{ start: number; end: number; key: string } | null>(null)
   const rootElRef = useRef<HTMLElement | null>(null)
   const conflictSectionRef = useRef<HTMLElement | null>(null)
+  const coverageSectionRef = useRef<HTMLElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 本地持久化
@@ -128,6 +137,27 @@ export default function App() {
   )
   const activeConflictCount = conflicts.filter((c) => !c.ignored).length
   const conflictRanges = useMemo(() => activeConflictRanges(conflicts), [conflicts])
+
+  // ---------- 标签覆盖审计 ----------
+
+  // 标签选择、标注编辑 / 重绑定、原文重定位、标签重命名后 doc 引用变化即自动重算
+  const coverage = useMemo(
+    () => auditCoverage(doc.annotations, doc.text.length, doc.coverageTags),
+    [doc.annotations, doc.text.length, doc.coverageTags],
+  )
+  const coverageIssueCount = coverage.gapCount + coverage.overlapCount
+  // 点击的区间若已在最新结果中消失（数据变化），取消高亮，避免指向陈旧区间
+  const activeCoverageRange = activeCoverage
+    ? coverage.issues.some(
+        (i) =>
+          i.start === activeCoverage.start &&
+          i.end === activeCoverage.end &&
+          activeCoverage.key.startsWith(`${i.kind}:`),
+      )
+      ? { start: activeCoverage.start, end: activeCoverage.end }
+      : null
+    : null
+
   const highlightIds: string[] = activePairIds
     ? [...activePairIds]
     : activeId
@@ -228,6 +258,7 @@ export default function App() {
           annotations: d.annotations,
           conflictRules: d.conflictRules,
           ignoredConflicts: d.ignoredConflicts,
+          coverageTags: d.coverageTags,
         },
         source,
         target,
@@ -238,6 +269,7 @@ export default function App() {
         annotations: plan.annotations,
         conflictRules: plan.rules,
         ignoredConflicts: plan.ignoredConflicts,
+        coverageTags: plan.coverageTags,
         updatedAt: Date.now(),
       }
     })
@@ -275,6 +307,29 @@ export default function App() {
     conflictSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  const scrollToCoverage = () => {
+    coverageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  // ---------- 标签覆盖审计 ----------
+
+  const changeCoverageTags = (tags: string[]) => {
+    const next = normalizeCoverageTags(tags)
+    setDoc((d) => ({ ...d, coverageTags: next, updatedAt: Date.now() }))
+  }
+
+  /** 侧栏点击覆盖结果：滚动到起点并高亮整条（可能跨多段） */
+  const focusCoverageIssue = (item: CoverageIssue) => {
+    setActiveId(null)
+    setActivePairIds(null)
+    setActiveCoverage({
+      start: item.start,
+      end: item.end,
+      key: `${item.kind}:${item.start}:${item.end}`,
+    })
+    scrollOffsetIntoView(item.start)
+  }
+
   // ---------- 编辑原文与重定位 ----------
 
   const applyEdit = (title: string, text: string) => {
@@ -303,6 +358,7 @@ export default function App() {
     setPopover(null)
     setActiveId(null)
     setActivePairIds(null)
+    setActiveCoverage(null)
     clearSelection()
   }
 
@@ -347,6 +403,7 @@ export default function App() {
   const focusAnnotation = (a: Annotation) => {
     if (a.status !== 'bound') return
     setActivePairIds(null)
+    setActiveCoverage(null)
     setActiveId(a.id)
     scrollOffsetIntoView(a.start)
   }
@@ -354,6 +411,7 @@ export default function App() {
   /** 定位冲突双方：两个标注同时高亮，滚动到交叠起点 */
   const focusConflict = (c: ConflictItem) => {
     setActiveId(null)
+    setActiveCoverage(null)
     setActivePairIds([...c.annotationIds] as [string, string])
     scrollOffsetIntoView(c.overlapStart)
   }
@@ -381,6 +439,7 @@ export default function App() {
         ruleIds: [...g.ruleIds],
         createdAt: new Date(g.createdAt).toISOString(),
       })),
+      coverageTags: [...doc.coverageTags],
       annotations: doc.annotations.map((a) => ({
         id: a.id,
         status: a.status,
@@ -448,6 +507,8 @@ export default function App() {
           annotations,
           conflictRules,
         ),
+        // 旧版导出文件不含覆盖审计配置：无损补空
+        coverageTags: normalizeCoverageTags(parsed.coverageTags),
         updatedAt: Date.now(),
       })
       setMode('view')
@@ -455,6 +516,7 @@ export default function App() {
       setRebindId(null)
       setActiveId(null)
       setActivePairIds(null)
+      setActiveCoverage(null)
     } catch {
       alert('文件解析失败，请确认是有效的 JSON 导出文件。')
     } finally {
@@ -475,6 +537,7 @@ export default function App() {
     setRebindId(null)
     setActiveId(null)
     setActivePairIds(null)
+    setActiveCoverage(null)
   }
 
   // ---------- 渲染 ----------
@@ -511,6 +574,16 @@ export default function App() {
             >
               冲突审阅
               {activeConflictCount > 0 && <span className="topbar-count">{activeConflictCount}</span>}
+            </button>
+          )}
+          {mode === 'view' && (
+            <button
+              className={`btn ${coverageIssueCount > 0 ? 'btn-warn' : 'btn-ghost'}`}
+              onClick={scrollToCoverage}
+              title="查看标签覆盖全文的缺口与重叠"
+            >
+              覆盖审计
+              {coverageIssueCount > 0 && <span className="topbar-count">{coverageIssueCount}</span>}
             </button>
           )}
           <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()}>
@@ -585,6 +658,8 @@ export default function App() {
                 activeIds={highlightIds}
                 rebinding={!!rebindId}
                 conflictRanges={conflictRanges}
+                coverageKindByStart={coverage.marksByStart}
+                activeCoverageRange={activeCoverageRange}
                 onSelect={handleSelect}
                 onInspect={handleInspect}
                 registerRef={(el) => {
@@ -596,6 +671,9 @@ export default function App() {
               共 {doc.text.length} 字 · {doc.annotations.length} 条标注
               {pendingCount > 0 && <span className="foot-pending">（{pendingCount} 条待处理）</span>}
               {activeConflictCount > 0 && <span className="foot-conflict">（{activeConflictCount} 条冲突待审阅）</span>}
+              {doc.coverageTags.length > 0 && coverageIssueCount > 0 && (
+                <span className="foot-coverage">（{coverageIssueCount} 处覆盖问题）</span>
+              )}
               {' '}· 数据自动保存在本浏览器
             </footer>
           </section>
@@ -607,6 +685,12 @@ export default function App() {
             activeId={activeId ?? activePairIds?.[0] ?? null}
             conflictRules={doc.conflictRules}
             conflicts={conflicts}
+            coverageTags={doc.coverageTags}
+            coverageResult={coverage}
+            activeCoverageKey={activeCoverage?.key ?? null}
+            onChangeCoverageTags={changeCoverageTags}
+            onFocusCoverage={focusCoverageIssue}
+            coverageSectionRef={coverageSectionRef}
             onFocus={focusAnnotation}
             onEdit={(a) =>
               setPopover({
@@ -736,6 +820,7 @@ export default function App() {
               annotations={doc.annotations}
               conflictRules={doc.conflictRules}
               ignoredConflicts={doc.ignoredConflicts}
+              coverageTags={doc.coverageTags}
               allTags={allTags}
               onCancel={() => setPopover(null)}
               onApply={applyTagRename}

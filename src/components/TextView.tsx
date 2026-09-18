@@ -18,6 +18,10 @@ interface Props {
   rebinding: boolean
   /** 未忽略冲突的交叠区间（已排序），落在其内的段加冲突描边 */
   conflictRanges: Array<{ start: number; end: number }>
+  /** 覆盖审计：按段起点标记该段是缺口 / 重叠 */
+  coverageKindByStart: Map<number, 'gap' | 'overlap'>
+  /** 侧栏点击审计结果后要高亮的区间 */
+  activeCoverageRange: { start: number; end: number } | null
   onSelect: (range: { start: number; end: number }, rect: ViewRect) => void
   onInspect: (ids: string[], rect: ViewRect) => void
   registerRef: (el: HTMLElement | null) => void
@@ -29,6 +33,8 @@ export function TextView({
   activeIds,
   rebinding,
   conflictRanges,
+  coverageKindByStart,
+  activeCoverageRange,
   onSelect,
   onInspect,
   registerRef,
@@ -95,18 +101,37 @@ export function TextView({
     >
       {segments.map((seg, i) => {
         const slice = text.slice(seg.start, seg.end)
+        const coverageKind = coverageKindByStart.get(seg.start) ?? null
+        const coverageActive =
+          !!activeCoverageRange &&
+          seg.start >= activeCoverageRange.start &&
+          seg.end <= activeCoverageRange.end
         if (seg.annotationIds.length === 0) {
+          // 覆盖缺口：无标注的段也要可着色 / 可滚动定位
+          if (coverageKind) {
+            return (
+              <mark
+                key={i}
+                data-start={seg.start}
+                data-end={seg.end}
+                className={`cov cov-${coverageKind} ${coverageActive ? 'cov-active' : ''}`}
+              >
+                {slice}
+              </mark>
+            )
+          }
           return <span key={i}>{slice}</span>
         }
         const isActive = seg.annotationIds.some((id) => activeIds.includes(id))
         const isConflict = isConflictSegment(conflictRanges, seg.start, seg.end)
+        const covClass = coverageKind ? `cov cov-${coverageKind}` : ''
         return (
           <mark
             key={i}
             data-start={seg.start}
             data-end={seg.end}
             data-ids={seg.annotationIds.join(',')}
-            className={`hl ${isActive ? 'hl-active' : ''} ${isConflict ? 'hl-conflict' : ''}`}
+            className={`hl ${isActive ? 'hl-active' : ''} ${isConflict ? 'hl-conflict' : ''} ${covClass} ${coverageActive ? 'cov-active' : ''}`}
             style={{ backgroundColor: blendedColor(seg.annotationIds) }}
           >
             {slice}
