@@ -1,12 +1,13 @@
 // 标签重命名：一次性原子地完成标签替换
 //
-// 涉及三类数据的同步变更：
+// 涉及四类数据的同步变更：
 // 1. 标注 tags：精确替换源标签；同条标注内因替换产生的重名标签去重，保留首次出现的位置（即原顺序）。
 // 2. 互斥规则：规则两端同步替换；替换后两侧相同的「自互斥规则」删除；
 //    替换后形成的无序重复标签对按 (createdAt, id) 保留最早一条，其余被合并。
 //    被删除/被合并规则的 ID 在 ruleIdMap 中映射到保留规则（自互斥规则无对应保留规则，不建立映射）。
 // 3. 忽略记录：先按 ruleIdMap 改写规则引用，再仅保留仍能对应当前冲突签名的记录；
 //    改写后多条记录指向同一签名时保留最早一条。
+// 4. 覆盖审计标签选择：精确替换源标签；替换后与既有目标标签重复时去重保序。
 
 import type {
   Annotation,
@@ -51,6 +52,10 @@ export interface TagRenamePlan {
   annotations: Annotation[]
   rules: ConflictRule[]
   ignoredConflicts: IgnoredConflict[]
+  /** 落地后的覆盖审计标签选择（源标签被精确替换、重名去重） */
+  coverageTags: string[]
+  /** 覆盖审计标签选择是否被本次重命名触及 */
+  coverageChanged: boolean
   annotationChanges: AnnotationTagChange[]
   ruleChanges: RuleChange[]
   /** 引用了源标签的规则总数（= changed + merged + deleted 明细数） */
@@ -70,6 +75,8 @@ interface RenamePlanInput {
   annotations: Annotation[]
   conflictRules: ConflictRule[]
   ignoredConflicts: IgnoredConflict[]
+  /** 覆盖审计选中的标签集合（缺省按空数组处理） */
+  coverageTags?: string[]
 }
 
 /** 判断规则是否引用源标签 */
@@ -244,6 +251,23 @@ export function planTagRename(
   const rewrittenIgnoredCount = [...keyRewritten.values()].filter(Boolean).length
   const removedIgnoredCount = doc.ignoredConflicts.length - kept.length
 
+  // ---------- 4. 覆盖审计标签选择：精确替换 + 去重保序 ----------
+
+  const selectedCoverage = doc.coverageTags ?? []
+  let coverageTags = selectedCoverage
+  let coverageChanged = false
+  if (selectedCoverage.includes(source)) {
+    const next: string[] = []
+    for (const t of selectedCoverage) {
+      const v = t === source ? target : t
+      // 目标标签已在更靠前位置出现过时跳过（与标注标签去重规则一致）
+      if (v === target && next.includes(target)) continue
+      next.push(v)
+    }
+    coverageTags = next
+    coverageChanged = true
+  }
+
   const mergedRuleCount = ruleChanges.filter((c) => c.kind === 'merged').length
   const deletedRuleCount = ruleChanges.filter((c) => c.kind === 'deleted').length
 
@@ -253,6 +277,8 @@ export function planTagRename(
     annotations,
     rules,
     ignoredConflicts: kept,
+    coverageTags,
+    coverageChanged,
     annotationChanges,
     ruleChanges,
     affectedRuleCount: doc.conflictRules.filter((r) => touches(r, source)).length,

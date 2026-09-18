@@ -351,8 +351,120 @@ assert.ok(html4.includes('尚未配置互斥标签对'), '旧版数据应显示�
 const reparsed = JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!)
 assert.ok(Array.isArray(reparsed.conflictRules) && reparsed.conflictRules.length === 0)
 assert.ok(Array.isArray(reparsed.ignoredConflicts) && reparsed.ignoredConflicts.length === 0)
+assert.ok(Array.isArray(reparsed.coverageTags) && reparsed.coverageTags.length === 0)
 assert.strictEqual(reparsed.text, '一二三四五六')
 console.log('  ✓ 旧数据无损兼容并自动补齐冲突字段')
+
+// 覆盖审计：选中标签 → 列出缺口与重叠 → 点击定位高亮 → 取消选择实时重算
+{
+  // jsdom 未实现 scrollIntoView，定位前补上空实现
+  ;(window.HTMLElement.prototype as { scrollIntoView?: () => void }).scrollIntoView =
+    () => {}
+
+  const covText = '甲乙丙丁戊己庚辛壬癸'
+  const covDoc = {
+    title: '覆盖文档',
+    text: covText,
+    updatedAt: Date.now(),
+    annotations: [
+      {
+        id: 'cov_a',
+        quote: '甲乙丙',
+        start: 0,
+        end: 3,
+        note: '',
+        tags: ['甲类'],
+        status: 'bound',
+        createdAt: 1,
+        updatedAt: 1,
+        contextBefore: '',
+        contextAfter: '',
+      },
+      {
+        id: 'cov_b',
+        quote: '丙丁',
+        start: 2,
+        end: 4,
+        note: '',
+        tags: ['乙类'],
+        status: 'bound',
+        createdAt: 1,
+        updatedAt: 1,
+        contextBefore: '',
+        contextAfter: '',
+      },
+      {
+        id: 'cov_c',
+        quote: '己庚',
+        start: 5,
+        end: 7,
+        note: '',
+        tags: ['未选'],
+        status: 'bound',
+        createdAt: 1,
+        updatedAt: 1,
+        contextBefore: '',
+        contextAfter: '',
+      },
+    ],
+    conflictRules: [],
+    ignoredConflicts: [],
+    coverageTags: ['甲类', '乙类'],
+  }
+  localStorage.setItem('anchor-annotation-console:v1', JSON.stringify(covDoc))
+  root4.unmount()
+  const c5 = document.createElement('div')
+  c5.id = 'root5'
+  document.body.appendChild(c5)
+  const r5 = createRoot(c5)
+
+  await new Promise<void>((resolve) => {
+    r5.render(React.createElement(React.StrictMode, null, React.createElement(App)))
+    setTimeout(resolve, 100)
+  })
+
+  const html5 = c5.innerHTML
+  assert.ok(html5.includes('覆盖审计'), '应渲染覆盖审计分区')
+  // 选中 甲类/乙类：cov_a/cov_b 在「丙」上重叠，[4,10) 未被选中标签覆盖成缺口
+  assert.ok(c5.querySelector('.coverage-item-gap'), '应列出缺口卡片')
+  assert.ok(c5.querySelector('.coverage-item-overlap'), '应列出重叠卡片')
+  assert.ok(html5.includes('戊己庚辛壬癸'), '缺口卡片应展示原文摘录')
+  assert.ok(html5.includes('[2, 3)'), '重叠卡片应展示半开区间')
+  assert.ok(c5.querySelector('.cov-gap'), '原文缺口段应有 cov-gap 高亮')
+  assert.ok(c5.querySelector('.cov-overlap'), '原文重叠段应有 cov-overlap 高亮')
+  const overlapAnnQuotes = [
+    ...c5.querySelectorAll('.coverage-item-overlap .coverage-ann-quote'),
+  ].map((el) => el.textContent)
+  assert.deepStrictEqual(overlapAnnQuotes, ['甲乙丙', '丙丁'], '重叠应列出参与标注')
+  console.log('  ✓ 覆盖审计：缺口/重叠卡片与原文高亮渲染成功')
+
+  // 点击重叠卡片 → 对应区间高亮（cov-active）
+  const overlapMain = c5.querySelector<HTMLButtonElement>(
+    '.coverage-item-overlap .coverage-main',
+  )!
+  assert.ok(overlapMain, '重叠卡片应可点击')
+  overlapMain.click()
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  assert.ok(c5.querySelector('.cov-active'), '点击后原文对应区间应高亮')
+  assert.ok(c5.querySelector('.coverage-item-active'), '点击后卡片应标记为激活')
+  console.log('  ✓ 点击覆盖问题卡片后滚动并高亮对应范围')
+
+  // 取消选择「乙类」→ 实时重算：重叠消失，选择随文档写入 localStorage
+  const tagBtn = [...c5.querySelectorAll<HTMLButtonElement>('.coverage-tag')].find(
+    (b) => b.textContent?.trim() === '#乙类',
+  )!
+  assert.ok(tagBtn, '应渲染审计标签选择')
+  tagBtn.click()
+  await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  assert.ok(!c5.querySelector('.coverage-item-overlap'), '取消选择后重叠应消失')
+  assert.ok(c5.querySelector('.coverage-item-gap'), '取消选择后缺口仍在')
+  const persisted = JSON.parse(localStorage.getItem('anchor-annotation-console:v1')!)
+  assert.deepStrictEqual(persisted.coverageTags, ['甲类'], '标签选择应随本地保存')
+  console.log('  ✓ 标签选择变化后实时重算并持久化')
+
+  r5.unmount()
+  c5.remove()
+}
 
 root4.unmount()
 container4.remove()

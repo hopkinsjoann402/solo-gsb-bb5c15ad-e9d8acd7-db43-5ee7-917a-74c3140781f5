@@ -7,6 +7,8 @@ interface Props {
   annotations: Annotation[]
   conflictRules: ConflictRule[]
   ignoredConflicts: IgnoredConflict[]
+  /** 覆盖审计选中的标签集合（源标签在其中时同步替换） */
+  coverageTags: string[]
   allTags: string[]
   onCancel: () => void
   onApply: (source: string, target: string) => void
@@ -35,6 +37,7 @@ export function TagRenameEditor({
   annotations,
   conflictRules,
   ignoredConflicts,
+  coverageTags,
   allTags,
   onCancel,
   onApply,
@@ -48,12 +51,12 @@ export function TagRenameEditor({
     () =>
       source
         ? planTagRename(
-            { annotations, conflictRules, ignoredConflicts },
+            { annotations, conflictRules, ignoredConflicts, coverageTags },
             source,
             target,
           )
         : null,
-    [source, target, annotations, conflictRules, ignoredConflicts],
+    [source, target, annotations, conflictRules, ignoredConflicts, coverageTags],
   )
 
   const sameTag = normalizedTarget !== '' && normalizedTarget === source
@@ -142,6 +145,12 @@ export function TagRenameEditor({
             <p className="rename-merge-hint">
               目标标签 #{plan.target} 已存在：本次将把两个标签<strong>合并</strong>，
               同一标注内重复出现时只保留靠前的一个。
+            </p>
+          )}
+
+          {plan.coverageChanged && (
+            <p className="rename-merge-hint">
+              覆盖审计的标签选择中包含 #{plan.source}，将同步替换为 #{plan.target}，审计结果随之重算。
             </p>
           )}
 

@@ -27,6 +27,11 @@ import {
   type ConflictItem,
 } from './lib/conflicts'
 import { planTagRename } from './lib/rename'
+import {
+  computeCoverageIssues,
+  normalizeCoverageTags,
+  type CoverageIssue,
+} from './lib/coverage'
 import { TextView, type ViewRect } from './components/TextView'
 import { TextEditor } from './components/TextEditor'
 import { Sidebar } from './components/Sidebar'
@@ -56,6 +61,7 @@ const EMPTY_DOC: DocumentData = {
   annotations: [],
   conflictRules: [],
   ignoredConflicts: [],
+  coverageTags: [],
   updatedAt: Date.now(),
 }
 
@@ -76,6 +82,8 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null)
   /** 从冲突项定位时，双方同时高亮 */
   const [activePairIds, setActivePairIds] = useState<[string, string] | null>(null)
+  /** 从覆盖审计定位时，高亮的问题区间 */
+  const [activeCoverage, setActiveCoverage] = useState<CoverageIssue | null>(null)
   const [popover, setPopover] = useState<PopoverState | null>(null)
   const [rebindId, setRebindId] = useState<string | null>(null)
   const [notice, setNotice] = useState<Notice | null>(null)
@@ -133,6 +141,42 @@ export default function App() {
     : activeId
       ? [activeId]
       : []
+
+  // ---------- 覆盖审计 ----------
+
+  // 标签选择、标注编辑/重绑定、原文重定位、标签重命名都会改变 doc，此处随之实时重算
+  const coverageIssues = useMemo(
+    () => computeCoverageIssues(doc.text.length, doc.annotations, doc.coverageTags),
+    [doc.text.length, doc.annotations, doc.coverageTags],
+  )
+  const coverageRanges = useMemo(
+    () => coverageIssues.map((i) => ({ start: i.start, end: i.end, kind: i.kind })),
+    [coverageIssues],
+  )
+  /** 高亮区间只在对应问题仍存在时生效（数据变更后自动失效） */
+  const liveActiveCoverage = useMemo(
+    () =>
+      activeCoverage &&
+      coverageIssues.some(
+        (i) =>
+          i.kind === activeCoverage.kind &&
+          i.start === activeCoverage.start &&
+          i.end === activeCoverage.end,
+      )
+        ? activeCoverage
+        : null,
+    [activeCoverage, coverageIssues],
+  )
+
+  const toggleCoverageTag = (tag: string) => {
+    setDoc((d) => ({
+      ...d,
+      coverageTags: d.coverageTags.includes(tag)
+        ? d.coverageTags.filter((t) => t !== tag)
+        : [...d.coverageTags, tag],
+      updatedAt: Date.now(),
+    }))
+  }
 
   // ---------- 选区与弹层 ----------
 
@@ -228,6 +272,7 @@ export default function App() {
           annotations: d.annotations,
           conflictRules: d.conflictRules,
           ignoredConflicts: d.ignoredConflicts,
+          coverageTags: d.coverageTags,
         },
         source,
         target,
@@ -238,6 +283,7 @@ export default function App() {
         annotations: plan.annotations,
         conflictRules: plan.rules,
         ignoredConflicts: plan.ignoredConflicts,
+        coverageTags: plan.coverageTags,
         updatedAt: Date.now(),
       }
     })
@@ -303,6 +349,7 @@ export default function App() {
     setPopover(null)
     setActiveId(null)
     setActivePairIds(null)
+    setActiveCoverage(null)
     clearSelection()
   }
 
@@ -358,6 +405,14 @@ export default function App() {
     scrollOffsetIntoView(c.overlapStart)
   }
 
+  /** 定位覆盖问题：高亮整个问题区间，滚动到其起点（缺口没有标注，按段偏移定位） */
+  const focusCoverageIssue = (issue: CoverageIssue) => {
+    setActiveId(null)
+    setActivePairIds(null)
+    setActiveCoverage(issue)
+    scrollOffsetIntoView(Math.min(issue.start, Math.max(0, doc.text.length - 1)))
+  }
+
   // ---------- 导入 / 导出 / 新建 ----------
 
   const exportJson = () => {
@@ -381,6 +436,7 @@ export default function App() {
         ruleIds: [...g.ruleIds],
         createdAt: new Date(g.createdAt).toISOString(),
       })),
+      coverageTags: [...doc.coverageTags],
       annotations: doc.annotations.map((a) => ({
         id: a.id,
         status: a.status,
@@ -441,13 +497,14 @@ export default function App() {
         title: parsed.document.title,
         text: parsed.document.text,
         annotations,
-        // 旧版导出文件不含冲突配置：无损补空；忽略记录引用已删标注/规则的在此剔除
+        // 旧版导出文件不含冲突配置与覆盖审计选择：无损补空；忽略记录引用已删标注/规则的在此剔除
         conflictRules,
         ignoredConflicts: pruneIgnored(
           normalizeIgnored(parsed.ignoredConflicts),
           annotations,
           conflictRules,
         ),
+        coverageTags: normalizeCoverageTags(parsed.coverageTags),
         updatedAt: Date.now(),
       })
       setMode('view')
@@ -455,6 +512,7 @@ export default function App() {
       setRebindId(null)
       setActiveId(null)
       setActivePairIds(null)
+      setActiveCoverage(null)
     } catch {
       alert('文件解析失败，请确认是有效的 JSON 导出文件。')
     } finally {
@@ -475,6 +533,7 @@ export default function App() {
     setRebindId(null)
     setActiveId(null)
     setActivePairIds(null)
+    setActiveCoverage(null)
   }
 
   // ---------- 渲染 ----------
@@ -585,6 +644,8 @@ export default function App() {
                 activeIds={highlightIds}
                 rebinding={!!rebindId}
                 conflictRanges={conflictRanges}
+                coverageRanges={coverageRanges}
+                activeCoverage={liveActiveCoverage}
                 onSelect={handleSelect}
                 onInspect={handleInspect}
                 registerRef={(el) => {
@@ -596,6 +657,7 @@ export default function App() {
               共 {doc.text.length} 字 · {doc.annotations.length} 条标注
               {pendingCount > 0 && <span className="foot-pending">（{pendingCount} 条待处理）</span>}
               {activeConflictCount > 0 && <span className="foot-conflict">（{activeConflictCount} 条冲突待审阅）</span>}
+              {coverageIssues.length > 0 && <span className="foot-coverage">（{coverageIssues.length} 处覆盖问题）</span>}
               {' '}· 数据自动保存在本浏览器
             </footer>
           </section>
@@ -607,6 +669,10 @@ export default function App() {
             activeId={activeId ?? activePairIds?.[0] ?? null}
             conflictRules={doc.conflictRules}
             conflicts={conflicts}
+            allTags={allTags}
+            coverageTags={doc.coverageTags}
+            coverageIssues={coverageIssues}
+            activeCoverage={liveActiveCoverage}
             onFocus={focusAnnotation}
             onEdit={(a) =>
               setPopover({
@@ -622,7 +688,8 @@ export default function App() {
             onUnignore={unignoreConflict}
             onConfigureRules={() => setPopover({ kind: 'rules' })}
             onRenameTags={() => setPopover({ kind: 'rename-tags' })}
-            tagCount={allTags.length}
+            onToggleCoverageTag={toggleCoverageTag}
+            onFocusCoverageIssue={focusCoverageIssue}
           />
         </main>
       )}
@@ -736,6 +803,7 @@ export default function App() {
               annotations={doc.annotations}
               conflictRules={doc.conflictRules}
               ignoredConflicts={doc.ignoredConflicts}
+              coverageTags={doc.coverageTags}
               allTags={allTags}
               onCancel={() => setPopover(null)}
               onApply={applyTagRename}

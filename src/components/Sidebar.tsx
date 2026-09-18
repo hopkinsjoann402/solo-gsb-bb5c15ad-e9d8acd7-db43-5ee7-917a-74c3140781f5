@@ -3,6 +3,7 @@ import type { Annotation, ConflictRule } from '../types'
 import { REASON_LABEL } from '../lib/relocation'
 import { badgeColor } from '../lib/segments'
 import type { ConflictItem } from '../lib/conflicts'
+import type { CoverageIssue } from '../lib/coverage'
 
 interface Props {
   text: string
@@ -10,6 +11,13 @@ interface Props {
   activeId: string | null
   conflictRules: ConflictRule[]
   conflicts: ConflictItem[]
+  /** 全部标签（含仅被互斥规则引用的），用于覆盖审计的标签选择 */
+  allTags: string[]
+  /** 覆盖审计：当前选中的标签集合 */
+  coverageTags: string[]
+  coverageIssues: CoverageIssue[]
+  /** 当前被定位高亮的覆盖问题区间 */
+  activeCoverage: { start: number; end: number } | null
   onFocus: (a: Annotation) => void
   onEdit: (a: Annotation) => void
   onRebindStart: (a: Annotation) => void
@@ -19,7 +27,8 @@ interface Props {
   onUnignore: (c: ConflictItem) => void
   onConfigureRules: () => void
   onRenameTags: () => void
-  tagCount: number
+  onToggleCoverageTag: (tag: string) => void
+  onFocusCoverageIssue: (issue: CoverageIssue) => void
 }
 
 function formatTime(ts: number): string {
@@ -30,6 +39,74 @@ function formatTime(ts: number): string {
 
 function overlapQuote(text: string, c: ConflictItem): string {
   return text.slice(c.overlapStart, c.overlapEnd)
+}
+
+const EXCERPT_LIMIT = 80
+
+/** 覆盖审计问题卡片：类型徽章、区间、原文摘录，重叠时列出参与标注 */
+function CoverageIssueCard({
+  text,
+  issue,
+  annById,
+  active,
+  onFocus,
+}: {
+  text: string
+  issue: CoverageIssue
+  annById: Map<string, Annotation>
+  active: boolean
+  onFocus: (issue: CoverageIssue) => void
+}) {
+  const excerpt = text.slice(issue.start, issue.end)
+  const shown =
+    excerpt.length > EXCERPT_LIMIT ? `${excerpt.slice(0, EXCERPT_LIMIT)}…` : excerpt
+  return (
+    <div
+      className={`coverage-item coverage-item-${issue.kind} ${active ? 'coverage-item-active' : ''}`}
+    >
+      <button
+        type="button"
+        className="coverage-main"
+        title="在原文中定位并高亮该区间"
+        onClick={() => onFocus(issue)}
+      >
+        <span className="coverage-head">
+          <span className={`coverage-kind coverage-kind-${issue.kind}`}>
+            {issue.kind === 'gap' ? '缺口' : '重叠'}
+          </span>
+          <span className="coverage-range">
+            [{issue.start}, {issue.end}) · {issue.end - issue.start} 字
+          </span>
+        </span>
+        <span className="coverage-excerpt" title={excerpt}>
+          「{shown}」
+        </span>
+      </button>
+      {issue.kind === 'overlap' && (
+        <div className="coverage-anns">
+          {issue.annotationIds.map((id) => {
+            const a = annById.get(id)
+            if (!a) return null
+            return (
+              <div key={id} className="coverage-ann">
+                <span className="ann-badge" style={{ backgroundColor: badgeColor(id) }} />
+                <span className="coverage-ann-quote" title={a.quote}>
+                  {a.quote || <span className="ann-empty-quote">（空引文）</span>}
+                </span>
+                <span className="coverage-ann-tags">
+                  {a.tags.map((t) => (
+                    <span className="ann-tag" key={t}>
+                      #{t}
+                    </span>
+                  ))}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function AnnotationItem({
@@ -308,11 +385,76 @@ export const Sidebar = forwardRef<HTMLElement, Props>(function Sidebar(props, se
 
       <section className="side-section">
         <div className="side-heading-row">
-          <h2 className="side-heading">标签管理（{props.tagCount}）</h2>
+          <h2 className={`side-heading ${props.coverageIssues.length > 0 ? 'side-heading-coverage' : ''}`}>
+            覆盖审计
+            {props.coverageIssues.length > 0 && (
+              <span className="coverage-count-badge">{props.coverageIssues.length}</span>
+            )}
+          </h2>
+        </div>
+        <p className="side-hint">
+          选择一组应共同覆盖全文的标签。系统只统计<strong>已绑定</strong>且命中所选标签的标注，
+          按 [start, end) 扫描全文：覆盖数为 0 记<strong>缺口</strong>，大于 1 记<strong>重叠</strong>。
+        </p>
+        {props.allTags.length === 0 ? (
+          <p className="side-hint">还没有可用标签，请先在标注中添加标签。</p>
+        ) : (
+          <div className="coverage-tags">
+            {props.allTags.map((t) => {
+              const on = props.coverageTags.includes(t)
+              return (
+                <button
+                  type="button"
+                  key={t}
+                  className={`coverage-tag ${on ? 'coverage-tag-on' : ''}`}
+                  aria-pressed={on}
+                  title={on ? '点击移出审计集合' : '点击加入审计集合'}
+                  onClick={() => props.onToggleCoverageTag(t)}
+                >
+                  #{t}
+                </button>
+              )
+            })}
+          </div>
+        )}
+        {props.coverageTags.length === 0 ? (
+          props.allTags.length > 0 && (
+            <p className="side-hint">尚未选择审计标签。点击上方标签加入审计集合，选择会随文档保存。</p>
+          )
+        ) : props.coverageIssues.length === 0 ? (
+          <p className="side-hint coverage-ok">
+            ✓ 所选 {props.coverageTags.length} 个标签已恰好覆盖全文，无缺口与重叠。
+          </p>
+        ) : (
+          <>
+            <p className="side-hint">
+              按起点列出 {props.coverageIssues.length} 处问题，点击可定位并高亮对应范围。
+            </p>
+            {props.coverageIssues.map((issue) => (
+              <CoverageIssueCard
+                key={`${issue.kind}:${issue.start}:${issue.end}`}
+                text={props.text}
+                issue={issue}
+                annById={annById}
+                active={
+                  !!props.activeCoverage &&
+                  props.activeCoverage.start === issue.start &&
+                  props.activeCoverage.end === issue.end
+                }
+                onFocus={props.onFocusCoverageIssue}
+              />
+            ))}
+          </>
+        )}
+      </section>
+
+      <section className="side-section">
+        <div className="side-heading-row">
+          <h2 className="side-heading">标签管理（{props.allTags.length}）</h2>
           <button
             className="btn btn-small btn-ghost"
             onClick={props.onRenameTags}
-            disabled={props.tagCount === 0}
+            disabled={props.allTags.length === 0}
             title="批量重命名一个标签：同步更新标注、互斥规则与忽略记录"
           >
             标签重命名

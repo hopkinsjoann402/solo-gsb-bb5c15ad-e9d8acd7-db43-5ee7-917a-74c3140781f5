@@ -3,6 +3,7 @@ import type { TextSegment } from '../lib/segments'
 import { blendedColor } from '../lib/segments'
 import { selectionToOffsets } from '../lib/dom'
 import { isConflictSegment } from '../lib/conflicts'
+import { coverageKindAt, type CoverageIssueKind } from '../lib/coverage'
 
 export interface ViewRect {
   top: number
@@ -18,6 +19,10 @@ interface Props {
   rebinding: boolean
   /** 未忽略冲突的交叠区间（已排序），落在其内的段加冲突描边 */
   conflictRanges: Array<{ start: number; end: number }>
+  /** 覆盖审计问题区间（已排序）：缺口段加淡红底，重叠段加琥珀描边 */
+  coverageRanges: Array<{ start: number; end: number; kind: CoverageIssueKind }>
+  /** 侧栏点击的覆盖问题区间，对应段加强调高亮 */
+  activeCoverage: { start: number; end: number } | null
   onSelect: (range: { start: number; end: number }, rect: ViewRect) => void
   onInspect: (ids: string[], rect: ViewRect) => void
   registerRef: (el: HTMLElement | null) => void
@@ -29,6 +34,8 @@ export function TextView({
   activeIds,
   rebinding,
   conflictRanges,
+  coverageRanges,
+  activeCoverage,
   onSelect,
   onInspect,
   registerRef,
@@ -95,8 +102,24 @@ export function TextView({
     >
       {segments.map((seg, i) => {
         const slice = text.slice(seg.start, seg.end)
+        const covKind = coverageKindAt(coverageRanges, seg.start, seg.end)
+        const covActive =
+          !!activeCoverage &&
+          activeCoverage.start <= seg.start &&
+          seg.end <= activeCoverage.end
         if (seg.annotationIds.length === 0) {
-          return <span key={i}>{slice}</span>
+          // 无标注段同样带 data-start/end：缺口定位需要按偏移找到它
+          const cls = [
+            covKind === 'gap' ? 'cov-gap' : '',
+            covActive ? 'cov-active' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')
+          return (
+            <span key={i} data-start={seg.start} data-end={seg.end} className={cls || undefined}>
+              {slice}
+            </span>
+          )
         }
         const isActive = seg.annotationIds.some((id) => activeIds.includes(id))
         const isConflict = isConflictSegment(conflictRanges, seg.start, seg.end)
@@ -106,7 +129,7 @@ export function TextView({
             data-start={seg.start}
             data-end={seg.end}
             data-ids={seg.annotationIds.join(',')}
-            className={`hl ${isActive ? 'hl-active' : ''} ${isConflict ? 'hl-conflict' : ''}`}
+            className={`hl ${isActive ? 'hl-active' : ''} ${isConflict ? 'hl-conflict' : ''} ${covKind === 'overlap' ? 'cov-overlap' : ''} ${covActive ? 'cov-active' : ''}`}
             style={{ backgroundColor: blendedColor(seg.annotationIds) }}
           >
             {slice}
